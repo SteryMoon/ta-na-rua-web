@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tá na Rua – Painel da prefeitura</title>
+<style>
+:root{--asfalto:#1f2933;--fundo:#f2f5f7;--faixa:#ffc400;--branco:#fff;--borda:#c9d2d9;--texto:#1f2933;--suave:#4a5865}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:1.0625rem;line-height:1.5;background:var(--fundo);color:var(--texto)}
+header{background:var(--asfalto);color:var(--branco);padding:1.25rem 1rem;border-bottom:6px solid var(--faixa)}
+header h1{margin:0;font-size:1.5rem}
+header p{margin:.25rem 0 0;color:#dfe6ec}
+main{max-width:56rem;margin:0 auto;padding:1rem}
+.barra{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:1rem 0}
+.barra span{font-weight:700;margin-right:.25rem}
+button,select{font:inherit;min-height:44px;border-radius:8px;border:2px solid var(--asfalto);background:var(--branco);color:var(--texto);padding:.4rem .9rem;cursor:pointer;transition:background .2s,transform .15s}
+button:hover{background:#fff4c2}
+button:active{transform:scale(.97)}
+button[aria-pressed="true"]{background:var(--asfalto);color:var(--branco)}
+:focus-visible{outline:3px solid #0057d9;outline-offset:2px}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:.75rem}
+li{background:var(--branco);border:1px solid var(--borda);border-left:8px solid var(--asfalto);border-radius:8px;padding:1rem;display:grid;gap:.5rem;animation:entra .35s ease both}
+li.destaque{animation:pisca 1.2s ease}
+li h2{margin:0;font-size:1.125rem}
+li p{margin:0;color:var(--suave)}
+.selo{display:inline-block;font-weight:700;padding:.15rem .6rem;border-radius:999px;border:2px solid var(--asfalto);width:fit-content}
+.aberta{border-left-color:#b42318}.em_andamento{border-left-color:#b54708}.resolvida{border-left-color:#027a48}
+.vazio{padding:2rem;text-align:center;background:var(--branco);border:2px dashed var(--borda);border-radius:8px}
+.sr{position:absolute;left:-9999px}
+@keyframes entra{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes pisca{0%{background:#fff4c2}100%{background:var(--branco)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Tá na Rua – Painel da prefeitura</h1>
+  <p>Veja as ocorrências enviadas pelos moradores e atualize o andamento.</p>
+</header>
+<main>
+  <div class="barra" role="group" aria-label="Filtrar por status">
+    <span>Filtrar:</span>
+    <button data-filtro="todas" aria-pressed="true">Todas</button>
+    <button data-filtro="aberta" aria-pressed="false">Abertas</button>
+    <button data-filtro="em_andamento" aria-pressed="false">Em andamento</button>
+    <button data-filtro="resolvida" aria-pressed="false">Resolvidas</button>
+  </div>
+  <p id="contagem" aria-live="polite"></p>
+  <div id="aviso" class="sr" role="status" aria-live="polite"></div>
+  <ul id="lista" aria-label="Lista de ocorrências"></ul>
+  <div class="barra"><button id="exemplos" hidden>Carregar ocorrências de exemplo</button></div>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, onSnapshot, query, orderBy, doc, updateDoc, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// COLE AQUI o firebaseConfig do seu projeto (mesmo do app)
+const firebaseConfig = {
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU_PROJETO.firebaseapp.com",
+  projectId: "SEU_PROJETO",
+  storageBucket: "SEU_PROJETO.appspot.com",
+  messagingSenderId: "000000000000",
+  appId: "SEU_APP_ID"
+};
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const col = collection(db, "ocorrencias");
+const NOMES = { aberta: "○ Aberta", em_andamento: "◐ Em andamento", resolvida: "✓ Resolvida" };
+const lista = document.getElementById("lista");
+const contagem = document.getElementById("contagem");
+const aviso = document.getElementById("aviso");
+const btnExemplos = document.getElementById("exemplos");
+let dados = [], filtro = "todas", ultimoAlterado = null;
+
+function desenhar() {
+  const itens = dados.filter(o => filtro === "todas" || o.status === filtro);
+  contagem.textContent = itens.length + (itens.length === 1 ? " ocorrência" : " ocorrências");
+  lista.innerHTML = "";
+  if (!itens.length) { lista.innerHTML = '<li class="vazio">Nenhuma ocorrência neste filtro.</li>'; return; }
+  itens.forEach(o => {
+    const li = document.createElement("li");
+    li.className = o.status + (o.id === ultimoAlterado ? " destaque" : "");
+    const opcoes = Object.keys(NOMES).map(s => `<option value="${s}" ${s === o.status ? "selected" : ""}>${NOMES[s]}</option>`).join("");
+    li.innerHTML = `
+      <h2></h2>
+      <span class="selo">${NOMES[o.status] || o.status}</span>
+      <p class="info"></p><p class="desc"></p>
+      <label>Alterar status:
+        <select aria-label="Alterar status de ${o.titulo ? o.titulo.replace(/"/g, "'") : "ocorrência"}">${opcoes}</select>
+      </label>`;
+    li.querySelector("h2").textContent = o.titulo || "Sem título";
+    li.querySelector(".info").textContent = `${o.categoria || ""} · ${o.endereco || ""}`;
+    li.querySelector(".desc").textContent = o.descricao || "";
+    li.querySelector("select").addEventListener("change", async e => {
+      ultimoAlterado = o.id;
+      await updateDoc(doc(db, "ocorrencias", o.id), { status: e.target.value });
+      aviso.textContent = `Status de ${o.titulo} alterado para ${NOMES[e.target.value]}.`;
+    });
+    lista.appendChild(li);
+  });
+}
+
+onSnapshot(query(col, orderBy("criadoEm", "desc")), snap => {
+  dados = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  btnExemplos.hidden = dados.length > 0;
+  desenhar();
+}, () => { contagem.textContent = "Não foi possível carregar. Verifique a configuração do Firebase."; });
+
+document.querySelectorAll("[data-filtro]").forEach(b => b.addEventListener("click", () => {
+  filtro = b.dataset.filtro;
+  document.querySelectorAll("[data-filtro]").forEach(x => x.setAttribute("aria-pressed", x === b));
+  desenhar();
+}));
+
+btnExemplos.addEventListener("click", async () => {
+  const ex = [
+    ["Buraco na Rua das Flores", "Buraco", "Rua das Flores, 120", "Buraco fundo perto do ponto de ônibus.", "aberta"],
+    ["Poste sem luz", "Iluminação", "Av. Brasil, 45", "Poste apagado há uma semana.", "em_andamento"],
+    ["Lixo acumulado na calçada", "Lixo", "Rua do Mercado, 300", "Entulho bloqueando a passagem.", "resolvida"]
+  ];
+  for (const [titulo, categoria, endereco, descricao, status] of ex)
+    await addDoc(col, { titulo, categoria, endereco, descricao, status, criadoEm: serverTimestamp() });
+});
+</script>
+</body>
+</html>
